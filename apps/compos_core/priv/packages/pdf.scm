@@ -42,7 +42,7 @@
 
 (define (pdf--cache-dir path)
   (let ((stamp (number->string (file-mtime path))))
-    (string-append (aimax-home) "/pdf-cache/"
+    (string-append (compos-home) "/pdf-cache/"
                    (pdf--path-key (string-append path ":" stamp)))))
 
 (define (pdf--clear-render-cache-real path)
@@ -90,14 +90,14 @@
 (define *pdf-working-copy-exists?* file-exists?)
 
 (define (pdf--command-succeeded? output)
-  (and output (string-contains? output "AIMAX_PDF_OK")))
+  (and output (string-contains? output "COMPOS_PDF_OK")))
 
 (define (pdf--copy-file-real source destination)
   (pdf--command-succeeded?
     (shell-command->string
       (string-append
         "cp -p -- " (sh-quote source) " " (sh-quote destination)
-        " && printf '\\nAIMAX_PDF_OK\\n'"))))
+        " && printf '\\nCOMPOS_PDF_OK\\n'"))))
 
 (define *pdf-copy-file!* pdf--copy-file-real)
 
@@ -105,7 +105,7 @@
 
 (define (pdf--next-edit-temp-dir)
   (set! pdf--edit-sequence (+ pdf--edit-sequence 1))
-  (string-append (aimax-home) "/tmp/pdf-edit-"
+  (string-append (compos-home) "/tmp/pdf-edit-"
                  (number->string (current-time)) "-"
                  (number->string pdf--edit-sequence)))
 
@@ -166,9 +166,9 @@
              " && mutool clean -gg -d " (sh-quote output) " " (sh-quote cleaned)
              " && mv -f -- " (sh-quote cleaned) " " (sh-quote output)
              " && mv -f -- " (sh-quote output) " " (sh-quote path)
-             " && printf '\\nAIMAX_PDF_OK\\n'"
-             "; aimax_pdf_status=$?; rm -rf -- " (sh-quote dir)
-             "; exit $aimax_pdf_status")))
+             " && printf '\\nCOMPOS_PDF_OK\\n'"
+             "; compos_pdf_status=$?; rm -rf -- " (sh-quote dir)
+             "; exit $compos_pdf_status")))
     (pdf--command-succeeded? (shell-command->string command))))
 
 (define *pdf-edit-pages!* pdf--edit-pages-real)
@@ -184,7 +184,7 @@
           " && cp -p -- " (sh-quote path) " " (sh-quote swap)
           " && cp -p -- " (sh-quote undo-path) " " (sh-quote path)
           " && mv -f -- " (sh-quote swap) " " (sh-quote undo-path)
-          " && printf '\\nAIMAX_PDF_OK\\n'")))))
+          " && printf '\\nCOMPOS_PDF_OK\\n'")))))
 
 (define *pdf-undo-edit!* pdf--undo-edit-real)
 
@@ -195,7 +195,7 @@
         "mkdir -p -- " (sh-quote (car (path-split undo-path)))
         " && cp -p -- " (sh-quote path) " " (sh-quote undo-path)
         " && cp -p -- " (sh-quote original) " " (sh-quote path)
-        " && printf '\\nAIMAX_PDF_OK\\n'"))))
+        " && printf '\\nCOMPOS_PDF_OK\\n'"))))
 
 (define *pdf-reset-edit!* pdf--reset-edit-real)
 
@@ -248,7 +248,7 @@
     "/" font " findfont dup length dict begin "
     "{1 index /FID ne {def} {pop pop} ifelse} forall "
     "/Encoding ISOLatin1Encoding def currentdict end "
-    "/AimaxFont exch definefont " (number->string size) " scalefont setfont "
+    "/ComposFont exch definefont " (number->string size) " scalefont setfont "
     body))
 
 (define (pdf--font-metrics-real font size text)
@@ -315,9 +315,9 @@
                    " && pdfunite" (pdf--quoted-paths inputs) " " (sh-quote joined)
                    " && mutool clean -gg -d " (sh-quote joined) " " (sh-quote cleaned)
                    " && mv -f -- " (sh-quote cleaned) " " (sh-quote destination)
-                   " && printf '\\nAIMAX_PDF_OK\\n'"
-                   "; aimax_pdf_status=$?; rm -rf -- " (sh-quote dir)
-                   "; exit $aimax_pdf_status")))
+                   " && printf '\\nCOMPOS_PDF_OK\\n'"
+                   "; compos_pdf_status=$?; rm -rf -- " (sh-quote dir)
+                   "; exit $compos_pdf_status")))
           (pdf--command-succeeded? (shell-command->string command))))))
 
 (define *pdf-write-text!* pdf--write-text-real)
@@ -488,7 +488,7 @@
   (if (pdf--generated-copy? source) source (pdf--generated-path source)))
 
 (define (pdf--undo-path path)
-  (string-append (aimax-home) "/pdf-edit-undo/"
+  (string-append (compos-home) "/pdf-edit-undo/"
                  (pdf--path-key path) ".pdf"))
 
 (define (pdf--buffer-name path)
@@ -530,7 +530,7 @@
 
 (define (pdf--action verb label key)
   (string-append
-    "<a class=\"action\" role=\"button\" href=\"aimax:pdf/" verb "\">"
+    "<a class=\"action\" role=\"button\" href=\"compos:pdf/" verb "\">"
     "<span>" label "</span><kbd>" key "</kbd></a>"))
 
 (define (pdf--disabled-action label key)

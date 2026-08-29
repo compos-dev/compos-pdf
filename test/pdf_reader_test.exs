@@ -1,7 +1,7 @@
-defmodule Aimax.Core.PdfReaderTest do
+defmodule Compos.Core.PdfReaderTest do
   use ExUnit.Case, async: false
 
-  alias Aimax.Core.{Buffer, Editor, KeyDispatch, Session}
+  alias Compos.Core.{Buffer, Editor, KeyDispatch, Session}
 
   defp eval!(source) do
     {:ok, printed} = Session.eval(source)
@@ -292,10 +292,10 @@ defmodule Aimax.Core.PdfReaderTest do
     eval!(~S|(visit "/tmp/reader-links.pdf")|)
     buf = Editor.current_buffer()
 
-    eval!(~S|(preview-follow-link! (active-window) "aimax:pdf/next")|)
+    eval!(~S|(preview-follow-link! (active-window) "compos:pdf/next")|)
     assert Buffer.get_local(buf, "pdf-page") == 2
 
-    eval!(~S|(preview-follow-link! (active-window) "aimax:pdf/zoom-in")|)
+    eval!(~S|(preview-follow-link! (active-window) "compos:pdf/zoom-in")|)
     assert Buffer.get_local(buf, "pdf-zoom") == 125
   end
 
