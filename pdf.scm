@@ -16,6 +16,10 @@
   "The percentage added or removed by one zoom command."
   'group 'pdf 'type 'number)
 
+(defcustom 'pdf-default-zoom "fit"
+  "Default zoom for PDF buffers: \"fit\" fits the whole page inside the buffer, or a percentage number."
+  'group 'pdf 'type 'sexp)
+
 (define pdf-min-zoom 50)
 (define pdf-max-zoom 250)
 
@@ -494,9 +498,22 @@
 (define (pdf--total buf)
   (max 0 (or (buffer-local-value 'pdf-total buf) 0)))
 
+(define (pdf--fit-zoom? zoom)
+  (or (equal? zoom "fit") (eq? zoom 'fit)))
+
+(define (pdf--normalize-zoom zoom)
+  (cond ((pdf--fit-zoom? zoom) "fit")
+        ((number? zoom) (max pdf-min-zoom (min pdf-max-zoom zoom)))
+        (else "fit")))
+
+(define (pdf--render-zoom zoom)
+  (if (pdf--fit-zoom? zoom) 100 zoom))
+
 (define (pdf--zoom buf)
-  (max pdf-min-zoom
-       (min pdf-max-zoom (or (buffer-local-value 'pdf-zoom buf) 100))))
+  (let ((z (buffer-local-value 'pdf-zoom buf)))
+    (if z
+        (pdf--normalize-zoom z)
+        (pdf--normalize-zoom pdf-default-zoom))))
 
 (define (pdf--dark? buf)
   (if (buffer-local-value 'pdf-dark? buf) #t #f))
@@ -531,66 +548,70 @@
 (define (pdf--page-width zoom)
   (quotient (* 960 zoom) 100))
 
+(define (pdf--footer-keys total dark? original)
+  (let ((nav (if (> total 1)
+                 (if original
+                     '(("n p" "page"))
+                     '(("n p" "page") ("Home End" "first/last")))
+                 '()))
+        (edit (if original
+                  '(("[ ]" "move") ("D" "duplicate") ("d" "delete") ("u" "undo") ("R" "reset"))
+                  '()))
+        (view (list '("+ -" "zoom")
+                    '("f" "fit")
+                    (list "i" (if dark? "light" "dark"))
+                    '("g" "refresh")
+                    '("q" "quit"))))
+    (append edit nav view)))
+
+(define (pdf--update-footer! buf total dark? original)
+  (desktop-skip! buf 'footer-line-blocks)
+  (when (boundp 'component)
+    (buffer-set-local! buf 'footer-line-blocks
+      (list (component 'ui/keys-bar
+              (list 'main (pdf--footer-keys total dark? original)))))))
+
 (define (pdf--document-html path page total zoom image text &optional original dark?)
-  (let ((title (html-escape (file-name-nondirectory path))))
+  (let* ((fit? (pdf--fit-zoom? zoom))
+         (body-class
+           (cond ((and fit? dark?) "fit-page dark-page")
+                 (fit? "fit-page")
+                 (dark? "dark-page")
+                 (else "")))
+         (title (html-escape (file-name-nondirectory path))))
     (string-append
       "<!doctype html><html><head><meta charset=\"utf-8\"><title>" title
       "</title><style>"
       ":root{color-scheme:light dark}*{box-sizing:border-box}"
       "body{margin:0;background:Canvas;color:CanvasText;font:14px/1.45 system-ui,-apple-system,sans-serif}"
-      ".toolbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;"
-      "padding:10px 14px;border-bottom:1px solid;background:Canvas;white-space:nowrap;overflow-x:auto;"
-      "box-shadow:0 1px 10px rgba(0,0,0,.08)}"
-      ".title{flex:1 1 auto;min-width:12ch;overflow:hidden;text-overflow:ellipsis;"
-      "font-weight:650;letter-spacing:.01em}"
-      ".status{display:flex;flex:0 0 auto;gap:8px;font-size:12px;opacity:.72}"
-      ".controls{display:flex;flex:0 0 auto;align-items:center;gap:8px;flex-wrap:nowrap}"
-      ".control-group{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid;border-radius:8px}"
       ".action{display:inline-flex;align-items:center;gap:7px;min-height:29px;padding:4px 8px;border:0;"
       "border-radius:5px;color:inherit;text-decoration:none;white-space:nowrap;font-size:12px;font-weight:560}"
       ".action:hover{background:color-mix(in srgb,currentColor 9%,transparent)}"
       ".action:focus-visible{outline:2px solid currentColor;outline-offset:1px}"
-      ".action.disabled{opacity:.28;cursor:default}.action kbd{font:10px/1 ui-monospace,monospace;opacity:.58}"
-      ".viewer{min-height:calc(100vh - 108px);padding:clamp(20px,4vw,52px);overflow:auto}"
-      ".page{width:max(100%,var(--page-width));}.page img{display:block;width:var(--page-width);max-width:none;"
+      ".action kbd{font:10px/1 ui-monospace,monospace;opacity:.58}"
+      ".viewer{min-height:100vh;padding:clamp(16px,3vw,40px);overflow:auto}"
+      ".page{width:max(100%,var(--page-width))}.page img{display:block;width:var(--page-width);max-width:none;"
       "height:auto;margin:0 auto;background:white;box-shadow:0 2px 5px rgba(0,0,0,.18),0 16px 48px rgba(0,0,0,.16)}"
+      ".fit-page{margin:0!important;padding:0!important;max-width:none!important}"
+      ".fit-page .stage{height:100vh;display:flex;flex-direction:column}"
+      ".fit-page .edit{flex:0 0 auto;width:calc(100% - 32px);max-width:960px;margin:12px auto 0}"
+      ".fit-page .viewer{flex:1 1 0;min-height:0;padding:12px;display:flex;align-items:center;justify-content:center;overflow:hidden}"
+      ".fit-page .page{width:100%;height:100%;display:flex;align-items:center;justify-content:center}"
+      ".fit-page .page img{width:auto;height:auto;max-width:100%;max-height:100%;margin:0}"
       ".dark-page .page img{filter:invert(1) hue-rotate(180deg);background:black}"
-      ".extract{max-width:76ch;margin:0 auto 36px;padding:0 18px 18px;border:1px solid;border-radius:8px}"
+      ".extract{max-width:76ch;margin:12px auto 36px;padding:0 18px 18px;border:1px solid;border-radius:8px}"
       ".extract summary{cursor:pointer;padding:13px 0;font-weight:600;font-size:12px}"
       ".extract pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.55 ui-monospace,monospace}"
       ".error{max-width:64ch;margin:60px auto;padding:18px;border:1px solid;border-radius:8px}"
       ".edit{max-width:960px;margin:18px auto 0;padding:12px 14px;border:1px solid;border-radius:9px}"
       ".edit strong{display:block}.edit small{display:block;overflow-wrap:anywhere;opacity:.65}"
       ".edit-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:9px}"
-      "@media(max-width:640px){.toolbar{gap:8px;padding:8px 10px}.title{min-width:10ch}.viewer{padding:14px}}"
-      "</style></head><body" (if dark? " class=\"dark-page\"" "") "><header class=\"toolbar\">"
-      "<span class=\"title\" title=\"" title "\">" title "</span>"
-      "<span class=\"status\"><span>Page " (number->string page) " of "
-      (number->string total) "</span><span>" (number->string zoom) "%</span>"
-      (if dark? "<span>Dark page</span>" "") "</span>"
-      "<nav class=\"controls\" aria-label=\"PDF controls\">"
-      (if (> total 1)
-          (string-append
-            "<span class=\"control-group\" aria-label=\"Page navigation\">"
-            (if (> page 1) (pdf--action "first" "First" "Home")
-                (pdf--disabled-action "First" "Home"))
-            (if (> page 1) (pdf--action "previous" "Previous" "p")
-                (pdf--disabled-action "Previous" "p"))
-            (if (< page total) (pdf--action "next" "Next" "n")
-                (pdf--disabled-action "Next" "n"))
-            (if (< page total) (pdf--action "last" "Last" "End")
-                (pdf--disabled-action "Last" "End"))
-            "</span>")
+      "@media(max-width:640px){.viewer{padding:12px}}"
+      "</style></head><body"
+      (if (> (string-length body-class) 0)
+          (string-append " class=\"" body-class "\"")
           "")
-      "<span class=\"control-group\" aria-label=\"Zoom\">"
-      (if (> zoom pdf-min-zoom) (pdf--action "zoom-out" "Smaller" "-")
-          (pdf--disabled-action "Smaller" "-"))
-      (if (< zoom pdf-max-zoom) (pdf--action "zoom-in" "Larger" "+")
-          (pdf--disabled-action "Larger" "+"))
-      "</span><span class=\"control-group\">"
-      (pdf--action "toggle-dark" (if dark? "Light page" "Dark page") "i")
-      (pdf--action "refresh" "Refresh" "g")
-      "</span></nav></header>"
+      "><div class=\"stage\">"
       (if original
           (string-append
             "<section class=\"edit\"><strong>Editing generated copy: " title "</strong>"
@@ -606,15 +627,19 @@
           "")
       (if image
           (string-append
-            "<main class=\"viewer\"><div class=\"page\" style=\"--page-width:"
-            (number->string (pdf--page-width zoom)) "px\"><img alt=\"Page "
-            (number->string page) "\" src=\"data:image/png;base64," image
-            "\"></div></main><details class=\"extract\"><summary>Page text</summary><pre>"
+            "<main class=\"viewer\"><div class=\"page\""
+            (if fit?
+                ""
+                (string-append " style=\"--page-width:"
+                               (number->string (pdf--page-width zoom)) "px\""))
+            "><img alt=\"Page " (number->string page)
+            "\" src=\"data:image/png;base64," image
+            "\"></div></main></div><details class=\"extract\"><summary>Page text</summary><pre>"
             (html-escape text) "</pre></details>")
           (string-append
             "<main class=\"error\"><h1>Cannot render this PDF</h1>"
             "<p>Install Poppler so <code>pdfinfo</code>, <code>pdftoppm</code>, "
-            "and <code>pdftotext</code> are available.</p></main>"))
+            "and <code>pdftotext</code> are available.</p></main></div>"))
       "</body></html>")))
 
 (define (pdf--replace! buf html)
@@ -630,13 +655,15 @@
         (original (buffer-local-value 'pdf-original-path buf))
         (dark? (pdf--dark? buf)))
     (if (not (and path (*pdf-file-exists?* path)))
-        (pdf--replace! buf
-          (pdf--document-html (or path "Missing PDF") 1 0 100 #f "" original dark?))
+        (begin
+          (pdf--update-footer! buf 0 dark? original)
+          (pdf--replace! buf
+            (pdf--document-html (or path "Missing PDF") 1 0 "fit" #f "" original dark?)))
         (let* ((total (if recount? (*pdf-page-count* path) (pdf--total buf)))
                (total (max 0 total))
                (page (max 1 (min (max 1 total) (pdf--page buf))))
                (zoom (pdf--zoom buf))
-               (image (and (> total 0) (*pdf-render-page* path page zoom)))
+               (image (and (> total 0) (*pdf-render-page* path page (pdf--render-zoom zoom))))
                (text (if image (*pdf-page-text* path page) "")))
           (buffer-set-local! buf 'pdf-total total)
           (buffer-set-local! buf 'pdf-page page)
@@ -644,8 +671,11 @@
           (buffer-set-local! buf 'modeline-info
             (string-append "page " (number->string page) "/"
                            (number->string total) " · "
-                           (number->string zoom) "%"
+                           (if (pdf--fit-zoom? zoom)
+                               "fit"
+                               (string-append (number->string zoom) "%"))
                            (if dark? " · dark" "")))
+          (pdf--update-footer! buf total dark? original)
           (pdf--replace! buf
             (pdf--document-html path page total zoom image text original dark?))))))
 
@@ -677,20 +707,27 @@
 
 (define (pdf--set-zoom! zoom)
   (let ((buf (current-buffer)))
-    (buffer-set-local! buf 'pdf-zoom
-      (max pdf-min-zoom (min pdf-max-zoom zoom)))
+    (buffer-set-local! buf 'pdf-zoom (pdf--normalize-zoom zoom))
     (pdf--render! buf #f)))
 
+(define-command "pdf-zoom-fit" "Fit the whole PDF page inside the buffer"
+  (lambda () (pdf--set-zoom! "fit"))
+  'modes '(pdf-reader-mode))
+
 (define-command "pdf-zoom-in" "Increase the PDF page size"
-  (lambda () (pdf--set-zoom! (+ (pdf--zoom (current-buffer)) pdf-zoom-step)))
+  (lambda ()
+    (let ((z (pdf--zoom (current-buffer))))
+      (pdf--set-zoom! (if (pdf--fit-zoom? z) 100 (+ z pdf-zoom-step)))))
   'modes '(pdf-reader-mode))
 
 (define-command "pdf-zoom-out" "Decrease the PDF page size"
-  (lambda () (pdf--set-zoom! (- (pdf--zoom (current-buffer)) pdf-zoom-step)))
+  (lambda ()
+    (let ((z (pdf--zoom (current-buffer))))
+      (pdf--set-zoom! (if (pdf--fit-zoom? z) pdf-min-zoom (- z pdf-zoom-step)))))
   'modes '(pdf-reader-mode))
 
-(define-command "pdf-zoom-reset" "Reset the PDF page size"
-  (lambda () (pdf--set-zoom! 100))
+(define-command "pdf-zoom-reset" "Reset the PDF page size to the default"
+  (lambda () (pdf--set-zoom! pdf-default-zoom))
   'modes '(pdf-reader-mode))
 
 (define-command "pdf-toggle-dark" "Change between the normal and dark PDF page"
@@ -887,12 +924,13 @@
     ("=" "pdf-zoom-in")
     ("-" "pdf-zoom-out")
     ("0" "pdf-zoom-reset")
+    ("f" "pdf-zoom-fit")
     ("i" "pdf-toggle-dark")
     ("g" "pdf-refresh")
     ("q" "quit-window")))
 
 (mode-doc! "pdf-reader-mode"
-  "A rendered PDF document. `n` and `p` change pages. `+` and `-` change size. `i` changes the page theme.")
+  "A rendered PDF document. `n` and `p` change pages. `+` and `-` change size; `f` or `0` fits the page to the buffer. `i` changes the page theme.")
 
 (define (pdf-edit-setup! buf)
   (pdf-reader-setup! buf)
@@ -997,6 +1035,8 @@
           ((equal? verb "last") (run-command "pdf-last-page"))
           ((equal? verb "zoom-out") (run-command "pdf-zoom-out"))
           ((equal? verb "zoom-in") (run-command "pdf-zoom-in"))
+          ((equal? verb "zoom-fit") (run-command "pdf-zoom-fit"))
+          ((equal? verb "zoom-reset") (run-command "pdf-zoom-reset"))
           ((equal? verb "toggle-dark") (run-command "pdf-toggle-dark"))
           ((equal? verb "refresh") (run-command "pdf-refresh"))
           ((equal? verb "move-backward") (run-command "pdf-edit-move-page-backward"))

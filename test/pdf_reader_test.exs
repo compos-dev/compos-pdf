@@ -126,9 +126,11 @@ defmodule Compos.Core.PdfReaderTest do
     assert Buffer.get_local(buf, "render-mode") == "html"
     refute Buffer.get_local(buf, "preview-authored")
     assert Buffer.read_only?(buf)
-    assert Buffer.text(buf) =~ "Page 1 of 3"
-    assert Buffer.text(buf) =~ ~s(class="toolbar")
-    assert Buffer.text(buf) =~ ~s(class="control-group")
+    assert Buffer.get_local(buf, "pdf-zoom") == "fit"
+    assert Buffer.get_local(buf, "modeline-info") == "page 1/3 · fit"
+    assert Buffer.get_local(buf, "footer-line-blocks")
+    assert Buffer.text(buf) =~ ~s(class="fit-page")
+    refute Buffer.text(buf) =~ ~s(class="toolbar")
     assert Buffer.text(buf) =~ "Text for page 1"
     assert Buffer.text(buf) =~ "data:image/png;base64,aGVsbG8="
   end
@@ -145,7 +147,7 @@ defmodule Compos.Core.PdfReaderTest do
     assert Buffer.path(buf) == "/tmp/direct-mode.PdF"
     refute Buffer.get_local(buf, "pdf-path")
     assert Buffer.get_local(buf, "pdf-total") == 3
-    assert Buffer.text(buf) =~ "Page 1 of 3"
+    assert Buffer.get_local(buf, "modeline-info") == "page 1/3 · fit"
     assert Buffer.text(buf) =~ "data:image/png;base64,aGVsbG8="
     refute Buffer.text(buf) =~ "Missing PDF"
   end
@@ -165,7 +167,7 @@ defmodule Compos.Core.PdfReaderTest do
     refute Buffer.path(buf)
     assert Buffer.get_local(buf, "pdf-path") == "/tmp/orphan-name.pdf"
     assert Buffer.get_local(buf, "pdf-total") == 3
-    assert Buffer.text(buf) =~ "Page 1 of 3"
+    assert Buffer.get_local(buf, "modeline-info") == "page 1/3 · fit"
     refute Buffer.text(buf) =~ "Missing PDF"
   end
 
@@ -182,7 +184,7 @@ defmodule Compos.Core.PdfReaderTest do
     assert Buffer.get_local(buf, "mode-name") == "pdf-reader-mode"
     assert Buffer.path(buf) == "/tmp/already-open.pdf"
     refute Buffer.get_local(buf, "pdf-path")
-    assert Buffer.text(buf) =~ "Page 1 of 3"
+    assert Buffer.get_local(buf, "modeline-info") == "page 1/3 · fit"
   end
 
   test "mode keys navigate pages and change zoom through key dispatch" do
@@ -193,9 +195,18 @@ defmodule Compos.Core.PdfReaderTest do
     assert Buffer.get_local(buf, "pdf-page") == 2
     assert Buffer.text(buf) =~ "Text for page 2"
 
+    assert Buffer.get_local(buf, "pdf-zoom") == "fit"
+
+    press("+")
+    assert Buffer.get_local(buf, "pdf-zoom") == 100
+    assert Buffer.get_local(buf, "modeline-info") =~ "100%"
+
     press("+")
     assert Buffer.get_local(buf, "pdf-zoom") == 125
-    assert Buffer.text(buf) =~ "125%"
+    assert Buffer.get_local(buf, "modeline-info") =~ "125%"
+
+    press("f")
+    assert Buffer.get_local(buf, "pdf-zoom") == "fit"
 
     press("<end>")
     press("n")
@@ -219,14 +230,16 @@ defmodule Compos.Core.PdfReaderTest do
 
     press("i")
     assert Buffer.get_local(buf, "pdf-dark?")
-    assert Buffer.text(buf) =~ ~s(<body class="dark-page">)
+    assert Buffer.text(buf) =~ ~s(<body class="fit-page dark-page">)
     assert Buffer.text(buf) =~ "filter:invert(1) hue-rotate(180deg)"
-    assert Buffer.text(buf) =~ "Light page"
+    assert Buffer.get_local(buf, "modeline-info") =~ "dark"
+    assert inspect(Buffer.get_local(buf, "footer-line-blocks")) =~ "light"
     refute Buffer.get_local(buf, "preview-authored")
 
     press("i")
     refute Buffer.get_local(buf, "pdf-dark?")
-    assert Buffer.text(buf) =~ "Dark page"
+    refute Buffer.get_local(buf, "modeline-info") =~ "dark"
+    assert inspect(Buffer.get_local(buf, "footer-line-blocks")) =~ "dark"
   end
 
   test "single-page documents omit navigation controls" do
@@ -236,24 +249,23 @@ defmodule Compos.Core.PdfReaderTest do
       (visit "/tmp/reader-single.pdf"))
     """)
 
-    html = Buffer.text(Editor.current_buffer())
-    assert html =~ "Page 1 of 1"
-    assert html =~ ~s(aria-label="Zoom")
-    refute html =~ ~s(aria-label="Page navigation")
+    buf = Editor.current_buffer()
+    footer = inspect(Buffer.get_local(buf, "footer-line-blocks"))
+    assert Buffer.get_local(buf, "modeline-info") == "page 1/1 · fit"
+    assert footer =~ "zoom"
+    refute footer =~ "first/last"
   end
 
-  test "the PDF header keeps its title, status, and controls on one line" do
+  test "the PDF reader omits the top toolbar and puts keys in the footer bar" do
     eval!(~S|(visit "/tmp/reader-header.pdf")|)
 
-    html = Buffer.text(Editor.current_buffer())
-    assert html =~ ~s(.toolbar{position:sticky;top:0;z-index:2;display:flex;align-items:center)
-    assert html =~ ~s(white-space:nowrap;overflow-x:auto)
-
-    assert html =~
-             ~s(.controls{display:flex;flex:0 0 auto;align-items:center;gap:8px;flex-wrap:nowrap})
-
-    assert html =~ ~s(<header class="toolbar"><span class="title")
-    refute html =~ ~s(class="identity")
+    buf = Editor.current_buffer()
+    html = Buffer.text(buf)
+    footer = inspect(Buffer.get_local(buf, "footer-line-blocks"))
+    refute html =~ ~s(<header class="toolbar")
+    assert html =~ ~s(class="fit-page")
+    assert footer =~ "ui/keys-bar"
+    assert footer =~ "fit"
   end
 
   test "mode setup rebuilds the document and local keys after restore" do
@@ -273,9 +285,8 @@ defmodule Compos.Core.PdfReaderTest do
 
     buf = Editor.current_buffer()
     assert eval!("zz-pdf-render-count") == "2"
-    assert Buffer.text(buf) =~ "Page 2 of 3"
-    assert Buffer.text(buf) =~ "150%"
-    assert Buffer.text(buf) =~ "Dark page"
+    assert Buffer.get_local(buf, "modeline-info") == "page 2/3 · 150% · dark"
+    assert Buffer.text(buf) =~ "--page-width:1440px"
 
     press("n")
     assert Buffer.get_local(buf, "pdf-page") == 3
@@ -289,7 +300,10 @@ defmodule Compos.Core.PdfReaderTest do
     assert Buffer.get_local(buf, "pdf-page") == 2
 
     eval!(~S|(preview-follow-link! (active-window) "compos:pdf/zoom-in")|)
-    assert Buffer.get_local(buf, "pdf-zoom") == 125
+    assert Buffer.get_local(buf, "pdf-zoom") == 100
+
+    eval!(~S|(preview-follow-link! (active-window) "compos:pdf/zoom-fit")|)
+    assert Buffer.get_local(buf, "pdf-zoom") == "fit"
   end
 
   test "pdf-edit-mode creates one stable sibling and preserves the original path" do
